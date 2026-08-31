@@ -1871,8 +1871,19 @@ function renderToolDetailAccordion(accordionInner, detail) {
   }
 
   if (mode === 'models' && hasModels) {
+    const timedOutput = modelRows.reduce((sum, row) => sum + (Number(row.timedOutputTokens) || 0), 0);
+    const timedDuration = modelRows.reduce((sum, row) => sum + (Number(row.timedDurationMs) || 0), 0);
+    const agentRate = timedOutput > 0 && timedDuration > 0 ? timedOutput * 1000 / timedDuration : 0;
+    appendAccordionMetricRow(
+      content,
+      'Throughput',
+      agentRate > 0 ? `≈ ${agentRate.toFixed(1)} tok/s` : '—',
+      null,
+      'tool-model-row'
+    );
     for (const model of modelRows) {
-      const metric = model.value > 0 ? formatNumber(model.value) : formatCost(model.cost);
+      const baseMetric = model.value > 0 ? formatNumber(model.value) : formatCost(model.cost);
+      const metric = model.tokenRate > 0 ? `${baseMetric} · ≈ ${model.tokenRate.toFixed(1)} tok/s` : `${baseMetric} · —`;
       const label = model.unattributed === true ? labels.unclassified : model.name;
       appendAccordionMetricRow(content, label, metric, model.value > 0 ? model.percent : null, 'tool-model-row');
     }

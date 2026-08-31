@@ -162,6 +162,10 @@ function emptyPeriod() {
     modelUnclassifiedTokens: {},
     clientModels: {},
     clientModelCosts: {},
+    // Timing stays keyed by client × model so identical model ids used by two
+    // tools never share a clock. Store raw sums; derive tok/s only in the UI.
+    clientModelTimedOutputTokens: {},
+    clientModelTimedDurationMs: {},
     projects: Object.create(null),
     sessions: {}
   };
@@ -686,6 +690,39 @@ function normalizePeriod(input, options = {}) {
       }
     }
   }
+  if (input.clientModelTimedDurationMs && typeof input.clientModelTimedDurationMs === 'object') {
+    for (const [client, models] of Object.entries(input.clientModelTimedDurationMs)) {
+      const clientKey = normalizeClientName(client);
+      if (!clientKey || !models || typeof models !== 'object') continue;
+      for (const [model, value] of Object.entries(models)) {
+        const modelKey = normalizeModelNameForClient(model, clientKey);
+        const duration = Math.max(0, Math.round(asNumber(value)));
+        if (!modelKey || duration <= 0) continue;
+        if (!period.clientModelTimedDurationMs[clientKey]) period.clientModelTimedDurationMs[clientKey] = {};
+        period.clientModelTimedDurationMs[clientKey][modelKey] = (period.clientModelTimedDurationMs[clientKey][modelKey] || 0) + duration;
+      }
+    }
+  }
+  if (input.clientModelTimedOutputTokens && typeof input.clientModelTimedOutputTokens === 'object') {
+    for (const [client, models] of Object.entries(input.clientModelTimedOutputTokens)) {
+      const clientKey = normalizeClientName(client);
+      if (!clientKey || !models || typeof models !== 'object') continue;
+      for (const [model, value] of Object.entries(models)) {
+        const modelKey = normalizeModelNameForClient(model, clientKey);
+        if (!modelKey) continue;
+        const duration = asNumber(period.clientModelTimedDurationMs?.[clientKey]?.[modelKey]);
+        if (duration <= 0) continue;
+        // A timed output count can never exceed the total tokens attributed to
+        // this client/model pair. This is deliberately conservative because the
+        // public period does not carry a client×model output-component map.
+        const modelTokens = Math.max(0, Math.round(asNumber(period.clientModels?.[clientKey]?.[modelKey])));
+        const output = Math.min(modelTokens, Math.max(0, Math.round(asNumber(value))));
+        if (output <= 0) continue;
+        if (!period.clientModelTimedOutputTokens[clientKey]) period.clientModelTimedOutputTokens[clientKey] = {};
+        period.clientModelTimedOutputTokens[clientKey][modelKey] = (period.clientModelTimedOutputTokens[clientKey][modelKey] || 0) + output;
+      }
+    }
+  }
   if (input.sessions && typeof input.sessions === 'object') {
     for (const [key, value] of Object.entries(input.sessions)) {
       const session = normalizeSession(value, key);
@@ -758,6 +795,12 @@ function addUsageRowToPeriod(period, row, detectedClient = detectClient(row)) {
   if (client && model && cost > 0) {
     if (!period.clientModelCosts[client]) period.clientModelCosts[client] = {};
     period.clientModelCosts[client][model] = (period.clientModelCosts[client][model] || 0) + cost;
+  }
+  if (client && model && timedDurationMs > 0) {
+    if (!period.clientModelTimedDurationMs[client]) period.clientModelTimedDurationMs[client] = {};
+    if (!period.clientModelTimedOutputTokens[client]) period.clientModelTimedOutputTokens[client] = {};
+    period.clientModelTimedDurationMs[client][model] = (period.clientModelTimedDurationMs[client][model] || 0) + timedDurationMs;
+    period.clientModelTimedOutputTokens[client][model] = (period.clientModelTimedOutputTokens[client][model] || 0) + timedOutputTokens;
   }
   const session = sessionFromRow(row);
   if (session) addSession(period, session);
@@ -917,6 +960,19 @@ function addClientModelUsage(target, source, client) {
     target.modelCosts[model] = (target.modelCosts[model] || 0) + cost;
     if (!target.clientModelCosts[client]) target.clientModelCosts[client] = {};
     target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
+  }
+  for (const [model, duration] of Object.entries(source.clientModelTimedDurationMs?.[client] || {})) {
+    const timedDuration = Math.max(0, Math.round(asNumber(duration)));
+    if (timedDuration <= 0) continue;
+    const modelTokens = Math.max(0, Math.round(asNumber(source.clientModels?.[client]?.[model])));
+    const timedOutput = Math.min(
+      modelTokens,
+      Math.max(0, Math.round(asNumber(source.clientModelTimedOutputTokens?.[client]?.[model])))
+    );
+    if (!target.clientModelTimedDurationMs[client]) target.clientModelTimedDurationMs[client] = {};
+    if (!target.clientModelTimedOutputTokens[client]) target.clientModelTimedOutputTokens[client] = {};
+    target.clientModelTimedDurationMs[client][model] = (target.clientModelTimedDurationMs[client][model] || 0) + timedDuration;
+    target.clientModelTimedOutputTokens[client][model] = (target.clientModelTimedOutputTokens[client][model] || 0) + timedOutput;
   }
 }
 
@@ -1256,6 +1312,17 @@ function addPeriodInto(target, source) {
     if (!target.clientModelCosts[client]) target.clientModelCosts[client] = {};
     for (const [model, cost] of Object.entries(models)) {
       target.clientModelCosts[client][model] = (target.clientModelCosts[client][model] || 0) + cost;
+    }
+  }
+  for (const [client, models] of Object.entries(source.clientModelTimedDurationMs || {})) {
+    if (!target.clientModelTimedDurationMs[client]) target.clientModelTimedDurationMs[client] = {};
+    if (!target.clientModelTimedOutputTokens[client]) target.clientModelTimedOutputTokens[client] = {};
+    for (const [model, duration] of Object.entries(models || {})) {
+      target.clientModelTimedDurationMs[client][model] = (target.clientModelTimedDurationMs[client][model] || 0) + duration;
+      const timedOutput = asNumber(source.clientModelTimedOutputTokens?.[client]?.[model]);
+      if (timedOutput > 0) {
+        target.clientModelTimedOutputTokens[client][model] = (target.clientModelTimedOutputTokens[client][model] || 0) + timedOutput;
+      }
     }
   }
   for (const [key, project] of Object.entries(source.projects || {})) addProjectInto(target.projects, key, project);

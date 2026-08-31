@@ -23,6 +23,14 @@ let testText = fs.readFileSync(path.join(root, 'tests/shared/modelThroughput.tes
 testText = testText.replaceAll('extractUsageFromTokscale({ data:', 'extractUsageFromTokscale({ entries:');
 fs.writeFileSync(path.join(root, 'tests/shared/modelThroughput.test.js'), testText);
 
+// Untimed model rows intentionally keep the historical row shape. That preserves every
+// existing consumer/deep-equality contract while timed rows gain the additive fields.
+replaceIn(
+  'tests/electron/modelThroughputToolDetails.test.js',
+  'assert.equal(deepseek.tokenRate, 0);',
+  'assert.equal(deepseek.tokenRate, undefined);'
+);
+
 // Do not change the app version independently of package-lock.json. The custom Release tag
 // identifies this fork build without creating package/lock drift.
 const packagePath = path.join(root, 'package.json');

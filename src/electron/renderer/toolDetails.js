@@ -22,6 +22,8 @@
 
     const total = amount(period?.clients?.[clientKey]);
     const totalCost = amount(period?.clientCosts?.[clientKey]);
+    const timedOutputs = period?.clientModelTimedOutputTokens?.[clientKey] || {};
+    const timedDurations = period?.clientModelTimedDurationMs?.[clientKey] || {};
     return usageAttributionRowsApi.attributionRows(models, costs, {
       totalValue: total,
       totalCost
@@ -29,12 +31,20 @@
       .map((row) => {
         const value = amount(row.value);
         const cost = amount(row.cost);
+        const timedOutputTokens = amount(timedOutputs[row.key]);
+        const timedDurationMs = amount(timedDurations[row.key]);
+        const tokenRate = timedOutputTokens > 0 && timedDurationMs > 0
+          ? timedOutputTokens * 1000 / timedDurationMs
+          : 0;
         return {
           key: row.key,
           name: row.key,
           value,
           cost,
           percent: total > 0 ? Math.min(100, value / total * 100) : 0,
+          timedOutputTokens,
+          timedDurationMs,
+          tokenRate,
           unattributed: row.unattributed === true
         };
       })

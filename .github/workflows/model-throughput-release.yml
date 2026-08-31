@@ -5,6 +5,7 @@ on:
     branches: ['feat/model-throughput']
     paths:
       - 'scripts/apply-model-throughput.js'
+      - 'scripts/fix-model-throughput-patch.js'
       - 'src/electron/renderer/toolDetails.js'
       - '.github/workflows/model-throughput-release.yml'
   workflow_dispatch:
@@ -32,10 +33,14 @@ jobs:
         run: npm ci
 
       - name: Apply Agent × Model throughput implementation
-        run: node scripts/apply-model-throughput.js
+        run: |
+          node scripts/apply-model-throughput.js
+          node scripts/fix-model-throughput-patch.js
 
       - name: Sync Worker and Hub build registry
-        run: npm run update:hub-build
+        run: |
+          npm run sync:worker
+          npm run update:hub-build
 
       - name: Verify implementation
         run: npm run verify

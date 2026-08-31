@@ -1,0 +1,105 @@
+name: Model Throughput Windows Release
+
+on:
+  push:
+    branches: ['feat/model-throughput']
+    paths:
+      - 'scripts/apply-model-throughput.js'
+      - 'src/electron/renderer/toolDetails.js'
+      - '.github/workflows/model-throughput-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-build-release:
+    if: ${{ !contains(github.event.head_commit.message || '', '[throughput-release]') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: feat/model-throughput
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply Agent × Model throughput implementation
+        run: node scripts/apply-model-throughput.js
+
+      - name: Sync Worker and Hub build registry
+        run: npm run update:hub-build
+
+      - name: Verify implementation
+        run: npm run verify
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/shared/usage.js worker/src/shared/usage.js src/shared/hubBuildRegistry.json package.json tests/shared/modelThroughput.test.js tests/electron/modelThroughputToolDetails.test.js src/electron/renderer/app.js src/electron/renderer/toolDetails.js
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: add Agent and model token throughput [throughput-release]"
+          fi
+          git push origin HEAD:feat/model-throughput
+          git push origin HEAD:main
+
+      - name: Build Windows installer and portable executable
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify Windows artifacts
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist -Filter 'Token-Monitor-Setup-*.exe' | Select-Object -First 1
+          $portable = Get-ChildItem dist -Filter 'Token-Monitor-*.exe' | Where-Object { $_.Name -notlike 'Token-Monitor-Setup-*' } | Select-Object -First 1
+          if (-not $setup) { throw 'Windows installer was not produced' }
+          if (-not $portable) { throw 'Windows portable executable was not produced' }
+          Write-Output "Installer: $($setup.Name) ($([math]::Round($setup.Length / 1MB, 2)) MB)"
+          Write-Output "Portable: $($portable.Name) ($([math]::Round($portable.Length / 1MB, 2)) MB)"
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='model-throughput-v0.50.0.1'
+          git tag -f "$tag"
+          git push origin "$tag" --force
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'model-throughput-v0.50.0.1'
+          $setup = (Get-ChildItem dist -Filter 'Token-Monitor-Setup-*.exe' | Select-Object -First 1).FullName
+          $portable = (Get-ChildItem dist -Filter 'Token-Monitor-*.exe' | Where-Object { $_.Name -notlike 'Token-Monitor-Setup-*' } | Select-Object -First 1).FullName
+          $notes = @"
+          Custom Windows build based on Token Monitor 0.50.0.
+
+          Added Agent → Model output throughput display (`tok/s`) using timing-derived raw sums.
+
+          - ZCode, OpenCode and Codex use real timing when Tokscale exposes duration data.
+          - Other supported agents/models automatically show a rate when reliable timing exists.
+          - Models without timing show `—` instead of an invented rate.
+          - Same model IDs used by different agents remain isolated.
+          - Agent throughput is duration-weighted from its timed model rows.
+
+          Assets:
+          - Setup: standard Windows installer.
+          - Portable: no-install executable.
+
+          Note: this fork build is unsigned because upstream SignPath signing credentials are not available to forks.
+          "@
+          gh release delete $tag --yes 2>$null
+          gh release create $tag $setup $portable --title 'Token Monitor 0.50.0 - Agent & Model Throughput' --notes $notes

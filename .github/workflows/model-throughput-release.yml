@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: model-throughput-windows-release
+  cancel-in-progress: true
+
 jobs:
   patch-test-build-release:
     if: ${{ !contains(github.event.head_commit.message || '', '[throughput-release]') }}
@@ -43,39 +47,12 @@ jobs:
           npm run update:hub-build
 
       - name: Run focused throughput tests
-        id: focused
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          node --test tests/shared/modelThroughput.test.js tests/electron/modelThroughputToolDetails.test.js *>&1 | Tee-Object focused-verify-output.txt
-          exit $LASTEXITCODE
+        run: node --test tests/shared/modelThroughput.test.js tests/electron/modelThroughputToolDetails.test.js
 
       - name: Verify implementation
-        id: verify
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          npm run verify *>&1 | Tee-Object verify-output.txt
-          exit $LASTEXITCODE
-
-      - name: Persist verification diagnostics
-        if: steps.focused.outcome == 'failure' || steps.verify.outcome == 'failure'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add focused-verify-output.txt verify-output.txt
-          git commit -m "chore: capture throughput verification failure"
-          git push origin HEAD:feat/model-throughput
-
-      - name: Enforce verification gate
-        if: steps.focused.outcome == 'failure' || steps.verify.outcome == 'failure'
-        shell: bash
-        run: exit 1
+        run: npm run verify
 
       - name: Commit verified implementation
-        if: steps.focused.outcome == 'success' && steps.verify.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -89,13 +66,11 @@ jobs:
           git push origin HEAD:main
 
       - name: Build Windows installer and portable executable
-        if: steps.focused.outcome == 'success' && steps.verify.outcome == 'success'
         run: npm run dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Verify Windows artifacts
-        if: steps.focused.outcome == 'success' && steps.verify.outcome == 'success'
         shell: pwsh
         run: |
           $setup = Get-ChildItem dist -Filter 'Token-Monitor-Setup-*.exe' | Select-Object -First 1
@@ -106,7 +81,6 @@ jobs:
           Write-Output "Portable: $($portable.Name) ($([math]::Round($portable.Length / 1MB, 2)) MB)"
 
       - name: Create release tag
-        if: steps.focused.outcome == 'success' && steps.verify.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +89,6 @@ jobs:
           git push origin "$tag" --force
 
       - name: Publish GitHub Release
-        if: steps.focused.outcome == 'success' && steps.verify.outcome == 'success'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -140,5 +113,6 @@ jobs:
 
           Note: this fork build is unsigned because upstream SignPath signing credentials are not available to forks.
           "@
-          gh release delete $tag --yes 2>$null
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { gh release delete $tag --yes }
           gh release create $tag $setup $portable --title 'Token Monitor 0.50.0 - Agent & Model Throughput' --notes $notes

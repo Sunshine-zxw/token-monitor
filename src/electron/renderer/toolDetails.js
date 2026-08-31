@@ -33,18 +33,20 @@
         const cost = amount(row.cost);
         const timedOutputTokens = amount(timedOutputs[row.key]);
         const timedDurationMs = amount(timedDurations[row.key]);
-        const tokenRate = timedOutputTokens > 0 && timedDurationMs > 0
-          ? timedOutputTokens * 1000 / timedDurationMs
-          : 0;
+        const timing = timedDurationMs > 0
+          ? {
+              timedOutputTokens,
+              timedDurationMs,
+              tokenRate: timedOutputTokens > 0 ? timedOutputTokens * 1000 / timedDurationMs : 0
+            }
+          : {};
         return {
           key: row.key,
           name: row.key,
           value,
           cost,
           percent: total > 0 ? Math.min(100, value / total * 100) : 0,
-          timedOutputTokens,
-          timedDurationMs,
-          tokenRate,
+          ...timing,
           unattributed: row.unattributed === true
         };
       })

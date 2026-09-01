@@ -35,6 +35,23 @@
     };
   }
 
+  function latestModelSpeedForPeriod(period, model) {
+    const modelKey = String(model || '').trim();
+    if (!modelKey) return {};
+    let latest = null;
+    for (const models of Object.values(period?.clientModelSpeedSamples || {})) {
+      const summary = recentSpeedSummary(models?.[modelKey]);
+      if (!(summary.lastTokenRate > 0) || !summary.lastCompletedAt) continue;
+      const completedAtMs = Date.parse(summary.lastCompletedAt);
+      if (!latest || completedAtMs > latest.completedAtMs) {
+        latest = { ...summary, completedAtMs };
+      }
+    }
+    if (!latest) return {};
+    const { completedAtMs: _completedAtMs, ...result } = latest;
+    return result;
+  }
+
   function modelRowsForTool(period, client) {
     const clientKey = String(client || '').trim();
     if (!clientKey) return [];
@@ -101,5 +118,11 @@
     };
   }
 
-  return { detailPercentLabel, modelRowsForTool, tokenInputPercentages, visibleModelRowsForTool };
+  return {
+    detailPercentLabel,
+    latestModelSpeedForPeriod,
+    modelRowsForTool,
+    tokenInputPercentages,
+    visibleModelRowsForTool
+  };
 });

@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/shared/recentModelSpeed.js'
       - 'scripts/apply-model-speed-v2.js'
+      - 'scripts/fix-model-speed-v2-tests.js'
       - '.github/workflows/model-speed-v2-release.yml'
   workflow_dispatch:
 
@@ -36,7 +37,9 @@ jobs:
         run: npm ci
 
       - name: Apply recent model speed implementation
-        run: node scripts/apply-model-speed-v2.js
+        run: |
+          node scripts/apply-model-speed-v2.js
+          node scripts/fix-model-speed-v2-tests.js
 
       - name: Sync Worker and Hub build registry
         run: |
@@ -66,6 +69,7 @@ jobs:
             tests/shared/recentModelSpeed.test.js \
             tests/electron/modelSpeedToolDetails.test.js \
             scripts/apply-model-speed-v2.js \
+            scripts/fix-model-speed-v2-tests.js \
             .github/workflows/model-speed-v2-release.yml
           if ! git diff --cached --quiet; then
             git commit -m "feat: add recent per-model output speed [model-speed-release]"

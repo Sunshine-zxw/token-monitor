@@ -13,6 +13,28 @@
     return Number.isFinite(number) ? Math.max(0, number) : 0;
   }
 
+  function recentSpeedSummary(samples) {
+    const valid = (Array.isArray(samples) ? samples : [])
+      .map((sample) => ({
+        outputTokens: amount(sample?.outputTokens),
+        durationMs: amount(sample?.durationMs),
+        completedAt: String(sample?.completedAt || '')
+      }))
+      .filter((sample) => sample.outputTokens > 0 && sample.durationMs > 0 && !Number.isNaN(Date.parse(sample.completedAt)))
+      .sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt))
+      .slice(0, 10);
+    if (!valid.length) return {};
+    const latest = valid[0];
+    const output = valid.reduce((sum, sample) => sum + sample.outputTokens, 0);
+    const duration = valid.reduce((sum, sample) => sum + sample.durationMs, 0);
+    return {
+      lastTokenRate: latest.outputTokens * 1000 / latest.durationMs,
+      avg10TokenRate: duration > 0 ? output * 1000 / duration : 0,
+      speedSampleCount: valid.length,
+      lastCompletedAt: latest.completedAt
+    };
+  }
+
   function modelRowsForTool(period, client) {
     const clientKey = String(client || '').trim();
     if (!clientKey) return [];
@@ -24,6 +46,7 @@
     const totalCost = amount(period?.clientCosts?.[clientKey]);
     const timedOutputs = period?.clientModelTimedOutputTokens?.[clientKey] || {};
     const timedDurations = period?.clientModelTimedDurationMs?.[clientKey] || {};
+    const recentSpeeds = period?.clientModelSpeedSamples?.[clientKey] || {};
     return usageAttributionRowsApi.attributionRows(models, costs, {
       totalValue: total,
       totalCost
@@ -40,6 +63,7 @@
               tokenRate: timedOutputTokens > 0 ? timedOutputTokens * 1000 / timedDurationMs : 0
             }
           : {};
+        const recentSpeed = recentSpeedSummary(recentSpeeds[row.key]);
         return {
           key: row.key,
           name: row.key,
@@ -47,6 +71,7 @@
           cost,
           percent: total > 0 ? Math.min(100, value / total * 100) : 0,
           ...timing,
+          ...recentSpeed,
           unattributed: row.unattributed === true
         };
       })

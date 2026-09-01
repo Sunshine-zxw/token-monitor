@@ -317,7 +317,7 @@ function normalizeInitialViewValue(value, allowed, fallback) {
 }
 
 const state = { period: normalizeInitialViewValue(initialViewState.period, viewPeriodValues, 'today'), appUpdate: null, breakdown: normalizeInitialViewValue(initialViewState.breakdown, viewBreakdownValues, 'home'), viewSwitcherOpen: false, viewSwitcherHasOpened: false, limitDetailTooltipHasOpened: false, limitDetailTooltipActive: false, limitDetailTooltipRenderPending: false, settings: null, windowVisible: new URLSearchParams(window.location.search).get('windowHidden') !== '1', stats: null, homeHistory: null, homeHistoryBusy: false, homeHistoryRequested: false, homeHistorySignature: '', homeHistoryRetries: 0, homeHistoryRetryTimer: null, homeActivityScrollLeft: null, homeActivityFollowEnd: true, homeActivityResizeObserver: null, serviceStatus: null, serviceStatusBusy: false, serviceProvidersExpanded: false, trendSettingsExpanded: false, trendsActivating: false, homeSettingsExpanded: false, homeLimitSettingsExpanded: false, limitProviderSettingsExpanded: '', clientHealthExpanded: '', clientSources: clientSourceCacheApi.createClientSourceCache(), clientSourcesKey: '', clientSourcesRequest: 0, subscriptionEditingId: '', subscriptionTopUps: [], subscriptionFormBase: null, subscriptionEditorTransitionId: 0, serviceStatusTicker: null, refreshTimer: null, refreshBusy: false, refreshFeedbackTimer: null, currentTotal: 0, rowSignature: '', streamConnected: false, streamFailure: null, mode: 'idle', appInfo: null, systemDarkUi: false, tokscaleStatus: null, tokscaleCheck: null, tokscaleBusy: false, hubInfo: null, hubBuildStatus: null, cursorAccount: { status: null, error: '' }, cursorAccountExpanded: false, codexAccountExpanded: false, codexAccountError: '', codexSignInBusy: false, codexSignInFlowId: '', codexLoginUrl: '', codexLoginStatus: '', codexLoginOutput: '', codexWorkspaceChoices: [], codexWorkspaceId: '', codexActiveAccount: null, codexPendingActiveAccount: null, codexPendingActiveAccountUntil: 0, codexPendingActiveAccountTimer: null, codexSystemSwitchingAccountId: '', codexSystemSwitchErrorAccountId: '', codexSystemSwitchError: '', codexSwitchPopoverHasOpened: false, codexSwitchPopoverActive: false, codexSwitchPopoverRenderPending: false, customPricingExpanded: false, claudeAccountExpanded: false, claudePendingCheckSince: 0, opencodeProfileCount: 0, opencodeCookieExpanded: false, openrouterProfileCount: 0, openrouterAccountExpanded: false, thirdPartyProfileCount: 0, thirdPartyAccountExpanded: false, deepseekAccountExpanded: false, deepseekPendingCheckSince: 0, minimaxAccountExpanded: false, minimaxPendingCheckSince: 0, zaiAccountExpanded: false, zaiPendingCheckSince: 0, zaiteamAccountExpanded: false, zaiteamPendingCheckSince: 0, volcengineAccountExpanded: false, volcenginePendingCheckSince: 0, volcengineAgentExpanded: false, qoderAccountExpanded: false, qoderPendingCheckSince: 0, commandcodeAccountExpanded: false, commandcodePendingCheckSince: 0, kimiAccountExpanded: false, kimiPendingCheckSince: 0, ollamaAccountExpanded: false, ollamaPendingCheckSince: 0, mimoAccountExpanded: false, mimoAccountError: '', copilotAccountExpanded: false, copilotManualExpanded: false, copilotPendingCheckSince: 0, copilotSignInBusy: false, copilotSignInCancelable: false, copilotSignInFlowId: '', copilotAuthorizeMessage: '', copilotLoginStatus: '', copilotErrorMessage: '', floatingBubble: initialFloatingBubble, suppressInitialNumberAnimation: window.__TOKEN_MONITOR_SUPPRESS_INITIAL_NUMBER_ANIMATION__ === true, openSession: null, detailSort: 'time', recordingWindowShortcut: false, windowShortcutInvalid: false };
-state.toolDetailMode = 'tokens';
+state.toolDetailMode = 'models';
 state.codexResetForecast = null;
 state.codexResetForecastBusy = false;
 state.codexResetForecastRequestedAt = 0;
@@ -1853,7 +1853,10 @@ function renderToolDetailAccordion(accordionInner, detail) {
     mode,
     labels,
     tokenParts,
-    modelRows.map((model) => [model.key, model.value, model.cost, Math.round(model.percent)])
+    modelRows.map((model) => [
+      model.key, model.value, model.cost, Math.round(model.percent),
+      model.lastTokenRate || 0, model.avg10TokenRate || 0, model.speedSampleCount || 0, model.lastCompletedAt || ''
+    ])
   ]);
   if (accordionInner.dataset.signature === signature) return;
 
@@ -1871,19 +1874,22 @@ function renderToolDetailAccordion(accordionInner, detail) {
   }
 
   if (mode === 'models' && hasModels) {
-    const timedOutput = modelRows.reduce((sum, row) => sum + (Number(row.timedOutputTokens) || 0), 0);
-    const timedDuration = modelRows.reduce((sum, row) => sum + (Number(row.timedDurationMs) || 0), 0);
-    const agentRate = timedOutput > 0 && timedDuration > 0 ? timedOutput * 1000 / timedDuration : 0;
+    const latestModel = modelRows
+      .filter((row) => row.lastTokenRate > 0 && row.lastCompletedAt)
+      .sort((a, b) => Date.parse(b.lastCompletedAt) - Date.parse(a.lastCompletedAt))[0];
     appendAccordionMetricRow(
       content,
-      'Throughput',
-      agentRate > 0 ? `≈ ${agentRate.toFixed(1)} tok/s` : '—',
+      'Latest model call (E2E)',
+      latestModel ? `${latestModel.name} · ${latestModel.lastTokenRate.toFixed(1)} tok/s` : '—',
       null,
       'tool-model-row'
     );
     for (const model of modelRows) {
       const baseMetric = model.value > 0 ? formatNumber(model.value) : formatCost(model.cost);
-      const metric = model.tokenRate > 0 ? `${baseMetric} · ≈ ${model.tokenRate.toFixed(1)} tok/s` : `${baseMetric} · —`;
+      const speed = model.lastTokenRate > 0
+        ? `Last ${model.lastTokenRate.toFixed(1)} · Avg${model.speedSampleCount} ${model.avg10TokenRate.toFixed(1)} tok/s`
+        : 'Last — · Avg —';
+      const metric = `${speed} · ${baseMetric}`;
       const label = model.unattributed === true ? labels.unclassified : model.name;
       appendAccordionMetricRow(content, label, metric, model.value > 0 ? model.percent : null, 'tool-model-row');
     }

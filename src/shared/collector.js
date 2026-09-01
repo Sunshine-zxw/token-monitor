@@ -42,6 +42,7 @@ const { withCursorLifecycle } = require('./cursorLifecycle');
 const { claudeSessionRoots } = require('./claudePaths');
 const { findSessionFiles, codexSessionFile } = require('./sessionFiles');
 const opencodeSession = require('./opencodeSession');
+const { collectRecentModelSpeedSamples } = require('./recentModelSpeed');
 const { buildPromaHistoryGraph, buildPromaPeriods, collectPromaRows } = require('./promaUsage');
 const {
   buildQoderCnHistoryGraph,
@@ -1778,6 +1779,27 @@ async function collectUsageOnce(options) {
   month = mergePeriods(windowsPeriods.month, wslBundle.month);
   allTime = mergePeriods(windowsPeriods.allTime, wslBundle.allTime);
   throwIfAborted(options.signal);
+
+  // This is deliberately NOT derived from today/month/allTime aggregates. It
+  // reads the most recent individual model-call records so the UI can show a
+  // real Last-call rate and a duration-weighted Avg10 for each Agent × Model.
+  // The same snapshot rides on all three periods because changing the dashboard
+  // period must not change what "last call" means.
+  try {
+    const clientModelSpeedSamples = collectRecentModelSpeedSamples({
+      clients: normalizedClients,
+      period: today,
+      homeDir: options.homeDir || os.homedir(),
+      env: options.env || process.env
+    });
+    if (Object.keys(clientModelSpeedSamples).length > 0) {
+      today.clientModelSpeedSamples = clientModelSpeedSamples;
+      month.clientModelSpeedSamples = clientModelSpeedSamples;
+      allTime.clientModelSpeedSamples = clientModelSpeedSamples;
+    }
+  } catch (error) {
+    if (typeof options.logger === 'function') options.logger(`recent model speed scan failed: ${error.message}`);
+  }
 
   // The renderer intentionally uses the live today period while a day is in
   // progress. Callers that do not defer capture persist the largest complete

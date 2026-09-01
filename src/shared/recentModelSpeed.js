@@ -349,7 +349,7 @@ function recentCodexFiles(period, home) {
 
   function addFile(file, sessionId = '') {
     if (!file || candidates.has(file)) return;
-    let mtime = 0;
+    let mtime;
     try { mtime = fs.statSync(file).mtimeMs; } catch (_) { return; }
     candidates.set(file, { file, sessionId, mtime });
   }

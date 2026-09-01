@@ -221,6 +221,76 @@ function normalizeModelNameForClient(value, client) {
   return qualified?.[1] || normalized;
 }
 
+const RECENT_MODEL_SPEED_SAMPLE_LIMIT = 10;
+
+function normalizeModelSpeedSample(value) {
+  if (!value || typeof value !== 'object') return null;
+  const outputTokens = Math.max(0, Math.round(asNumber(value.outputTokens ?? value.output_tokens)));
+  const durationMs = Math.max(0, Math.round(asNumber(value.durationMs ?? value.duration_ms)));
+  const completedAt = normalizeIsoTimestamp(value.completedAt ?? value.completed_at);
+  if (outputTokens <= 0 || durationMs <= 0 || !completedAt) return null;
+  const sample = { outputTokens, durationMs, completedAt };
+  const sessionId = String(value.sessionId ?? value.session_id ?? '').trim();
+  const sampleId = String(value.sampleId ?? value.sample_id ?? '').trim();
+  const source = String(value.source ?? '').trim();
+  if (sessionId) sample.sessionId = sessionId.slice(0, 256);
+  if (sampleId) sample.sampleId = sampleId.slice(0, 512);
+  if (source) sample.source = source.slice(0, 64);
+  return sample;
+}
+
+function modelSpeedSampleKey(sample) {
+  return sample.sampleId || [sample.sessionId || '', sample.completedAt, sample.outputTokens, sample.durationMs].join('|');
+}
+
+function mergeModelSpeedSampleArrays(...lists) {
+  const seen = new Set();
+  const merged = [];
+  for (const raw of lists.flatMap((value) => Array.isArray(value) ? value : [])) {
+    const sample = normalizeModelSpeedSample(raw);
+    if (!sample) continue;
+    const key = modelSpeedSampleKey(sample);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(sample);
+  }
+  return merged
+    .sort((a, b) => timestampMs(b.completedAt) - timestampMs(a.completedAt))
+    .slice(0, RECENT_MODEL_SPEED_SAMPLE_LIMIT);
+}
+
+function normalizeClientModelSpeedSamples(value) {
+  const result = {};
+  if (!value || typeof value !== 'object') return result;
+  for (const [client, models] of Object.entries(value)) {
+    const clientKey = normalizeClientName(client);
+    if (!clientKey || !models || typeof models !== 'object') continue;
+    for (const [model, samples] of Object.entries(models)) {
+      const modelKey = normalizeModelNameForClient(model, clientKey);
+      if (!modelKey) continue;
+      const normalized = mergeModelSpeedSampleArrays(samples);
+      if (!normalized.length) continue;
+      if (!result[clientKey]) result[clientKey] = {};
+      result[clientKey][modelKey] = normalized;
+    }
+  }
+  return result;
+}
+
+function mergeClientModelSpeedSamplesInto(period, value) {
+  const normalized = normalizeClientModelSpeedSamples(value);
+  for (const [client, models] of Object.entries(normalized)) {
+    if (!period.clientModelSpeedSamples) period.clientModelSpeedSamples = {};
+    if (!period.clientModelSpeedSamples[client]) period.clientModelSpeedSamples[client] = {};
+    for (const [model, samples] of Object.entries(models)) {
+      period.clientModelSpeedSamples[client][model] = mergeModelSpeedSampleArrays(
+        period.clientModelSpeedSamples[client][model],
+        samples
+      );
+    }
+  }
+}
+
 function normalizeSessionId(value) {
   const raw = String(value || '').trim();
   return raw || null;
@@ -723,6 +793,9 @@ function normalizePeriod(input, options = {}) {
       }
     }
   }
+  if (input.clientModelSpeedSamples && typeof input.clientModelSpeedSamples === 'object') {
+    mergeClientModelSpeedSamplesInto(period, input.clientModelSpeedSamples);
+  }
   if (input.sessions && typeof input.sessions === 'object') {
     for (const [key, value] of Object.entries(input.sessions)) {
       const session = normalizeSession(value, key);
@@ -973,6 +1046,9 @@ function addClientModelUsage(target, source, client) {
     if (!target.clientModelTimedOutputTokens[client]) target.clientModelTimedOutputTokens[client] = {};
     target.clientModelTimedDurationMs[client][model] = (target.clientModelTimedDurationMs[client][model] || 0) + timedDuration;
     target.clientModelTimedOutputTokens[client][model] = (target.clientModelTimedOutputTokens[client][model] || 0) + timedOutput;
+  }
+  if (source.clientModelSpeedSamples?.[client]) {
+    mergeClientModelSpeedSamplesInto(target, { [client]: source.clientModelSpeedSamples[client] });
   }
 }
 
@@ -1325,6 +1401,7 @@ function addPeriodInto(target, source) {
       }
     }
   }
+  if (source.clientModelSpeedSamples) mergeClientModelSpeedSamplesInto(target, source.clientModelSpeedSamples);
   for (const [key, project] of Object.entries(source.projects || {})) addProjectInto(target.projects, key, project);
   for (const session of Object.values(source.sessions)) addSession(target, session);
   return target;
@@ -1469,6 +1546,10 @@ function applyPeriodDelta(base, freshToday, anchorToday) {
 }
 
 function deltaValue(base, fresh, anchor, key) {
+  // Recent speed samples are a replace-by-fresh snapshot, not additive usage.
+  // Recursing into their arrays would manufacture numeric deltas from sample
+  // fields and corrupt Last/Avg10 on every watch-triggered warm tick.
+  if (key === 'clientModelSpeedSamples') return fresh ?? base ?? {};
   if (key === 'tokenComponents') {
     // A warm tick may introduce aggregate-only fallback data. Boolean
     // provenance is not arithmetically subtractable, so retain exactness only

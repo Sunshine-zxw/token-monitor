@@ -1,0 +1,130 @@
+name: Model Speed v2 Windows Release
+
+on:
+  push:
+    branches: ['feat/model-speed-v2']
+    paths:
+      - 'src/shared/recentModelSpeed.js'
+      - 'scripts/apply-model-speed-v2.js'
+      - '.github/workflows/model-speed-v2-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: model-speed-v2-windows-release
+  cancel-in-progress: true
+
+jobs:
+  patch-test-build-release:
+    if: ${{ !contains(github.event.head_commit.message || '', '[model-speed-release]') }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: feat/model-speed-v2
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply recent model speed implementation
+        run: node scripts/apply-model-speed-v2.js
+
+      - name: Sync Worker and Hub build registry
+        run: |
+          npm run sync:worker
+          npm run update:hub-build
+
+      - name: Run focused model speed tests
+        run: node --test tests/shared/recentModelSpeed.test.js tests/electron/modelSpeedToolDetails.test.js tests/shared/modelThroughput.test.js tests/electron/modelThroughputToolDetails.test.js
+
+      - name: Verify implementation
+        run: npm run verify
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/shared/recentModelSpeed.js \
+            src/shared/usage.js \
+            src/shared/collector.js \
+            worker/src/shared/usage.js \
+            src/shared/hubBuildRegistry.json \
+            src/electron/renderer/app.js \
+            src/electron/renderer/toolDetails.js \
+            tests/shared/recentModelSpeed.test.js \
+            tests/electron/modelSpeedToolDetails.test.js \
+            scripts/apply-model-speed-v2.js \
+            .github/workflows/model-speed-v2-release.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: add recent per-model output speed [model-speed-release]"
+          fi
+          git push origin HEAD:feat/model-speed-v2
+          git push origin HEAD:main
+
+      - name: Build Windows installer and portable executable
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Verify Windows artifacts
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist -Filter 'Token-Monitor-Setup-*.exe' | Select-Object -First 1
+          $portable = Get-ChildItem dist -Filter 'Token-Monitor-*.exe' | Where-Object { $_.Name -notlike 'Token-Monitor-Setup-*' } | Select-Object -First 1
+          if (-not $setup) { throw 'Windows installer was not produced' }
+          if (-not $portable) { throw 'Windows portable executable was not produced' }
+          Write-Output "Installer: $($setup.Name) ($([math]::Round($setup.Length / 1MB, 2)) MB)"
+          Write-Output "Portable: $($portable.Name) ($([math]::Round($portable.Length / 1MB, 2)) MB)"
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='model-speed-v0.50.0.2'
+          git tag -f "$tag"
+          git push origin "$tag" --force
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'model-speed-v0.50.0.2'
+          $setup = (Get-ChildItem dist -Filter 'Token-Monitor-Setup-*.exe' | Select-Object -First 1).FullName
+          $portable = (Get-ChildItem dist -Filter 'Token-Monitor-*.exe' | Where-Object { $_.Name -notlike 'Token-Monitor-Setup-*' } | Select-Object -First 1).FullName
+          $notes = @"
+          Custom Windows build based on Token Monitor 0.50.0.
+
+          Model Speed v2 replaces the old period-aggregate throughput display with recent individual-call speed for ZCode, OpenCode and Codex.
+
+          - Last: visible completion output tokens / that individual model-call duration.
+          - Avg10: duration-weighted average of the latest 10 valid calls for that Agent + Model.
+          - Reasoning tokens are excluded from visible output speed for ZCode and Codex.
+          - OpenCode uses assistant-message tokens.output and time.completed - time.created.
+          - Codex re-anchors after tool-result boundaries when available so tool execution time is not attributed to the following model call.
+          - Missing or unreliable timing is shown as an em dash instead of an invented speed.
+          - Agent and model identities stay isolated, even when two agents use the same model id.
+
+          Metric note: this is end-to-end model-call output rate. It can include TTFT/provider latency because these local logs do not expose a uniform first-token timestamp, so it is not presented as pure decoder-only speed.
+
+          Assets:
+          - Setup: standard Windows installer.
+          - Portable: no-install executable.
+
+          Note: this fork build is unsigned because upstream SignPath signing credentials are not available to forks.
+          "@
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { gh release delete $tag --yes }
+          gh release create $tag $setup $portable --title 'Token Monitor 0.50.0 - Model Speed v2' --notes $notes

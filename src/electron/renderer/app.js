@@ -1716,7 +1716,7 @@ function rowTemplate(rowData) {
   if (platform) row.dataset.platform = platform;
   if (client) row.dataset.client = client;
   if (kind) row.dataset.kind = kind;
-  row.innerHTML = '<div class="row-head"><div class="row-name"><span class="row-mark"></span><div class="row-label"><span class="row-title"></span><span class="row-subtitle"></span><span class="row-detail"></span></div></div><div class="row-metrics"><div class="row-value"></div><div class="row-cost"></div></div></div><div class="row-body"><div class="bar"><div class="bar-fill"></div></div><div class="row-accordion"><div class="row-accordion-inner"></div></div></div>';
+  row.innerHTML = '<div class="row-head"><div class="row-name"><span class="row-mark"></span><div class="row-label"><span class="row-title"></span><span class="row-subtitle"></span><span class="row-detail"></span></div></div><div class="row-metrics"><div class="row-primary-metric"><span class="row-speed hidden"></span><div class="row-value"></div></div><div class="row-cost"></div></div></div><div class="row-body"><div class="bar"><div class="bar-fill"></div></div><div class="row-accordion"><div class="row-accordion-inner"></div></div></div>';
   row.querySelector('.row-title').textContent = name;
   row.querySelector('.row-subtitle').textContent = subtitle || '';
   row.querySelector('.row-detail').textContent = detail || '';
@@ -1874,22 +1874,10 @@ function renderToolDetailAccordion(accordionInner, detail) {
   }
 
   if (mode === 'models' && hasModels) {
-    const latestModel = modelRows
-      .filter((row) => row.lastTokenRate > 0 && row.lastCompletedAt)
-      .sort((a, b) => Date.parse(b.lastCompletedAt) - Date.parse(a.lastCompletedAt))[0];
-    appendAccordionMetricRow(
-      content,
-      'Latest model call (E2E)',
-      latestModel ? `${latestModel.name} · ${latestModel.lastTokenRate.toFixed(1)} tok/s` : '—',
-      null,
-      'tool-model-row'
-    );
     for (const model of modelRows) {
-      const baseMetric = model.value > 0 ? formatNumber(model.value) : formatCost(model.cost);
-      const speed = model.lastTokenRate > 0
-        ? `Last ${model.lastTokenRate.toFixed(1)} · Avg${model.speedSampleCount} ${model.avg10TokenRate.toFixed(1)} tok/s`
-        : 'Last — · Avg —';
-      const metric = `${speed} · ${baseMetric}`;
+      const metric = model.avg10TokenRate > 0
+        ? `Avg${model.speedSampleCount} ${model.avg10TokenRate.toFixed(1)} tok/s`
+        : 'Avg —';
       const label = model.unattributed === true ? labels.unclassified : model.name;
       appendAccordionMetricRow(content, label, metric, model.value > 0 ? model.percent : null, 'tool-model-row');
     }
@@ -1935,7 +1923,7 @@ function setActiveToolDetailMode(mode) {
   renderToolDetailFooter();
 }
 
-function updateRow(row, { name, subtitle, detail, value, cost, max, color, barBackground, accordionRows, deviceDetail, stale, platform, local, client, kind, cacheReadTokens, outputTokens, unclassifiedTokens, modelRows, tokenDataUnavailable, sessionDetailAvailable }) {
+function updateRow(row, { name, subtitle, detail, value, cost, max, color, barBackground, accordionRows, deviceDetail, stale, platform, local, client, kind, cacheReadTokens, outputTokens, unclassifiedTokens, modelRows, tokenDataUnavailable, sessionDetailAvailable, lastTokenRate }) {
   const width = rowWidth(value, max);
   const isExpanded = row.classList.contains('expanded');
   row.className = `row${kind ? ` ${kind}-row` : ''}${stale ? ' stale' : ''}${local ? ' local' : ''}`;
@@ -1984,6 +1972,13 @@ function updateRow(row, { name, subtitle, detail, value, cost, max, color, barBa
   valueEl.dataset.motionValue = String(Number(value) || 0);
   row.dataset.motionValue = String(Number(value) || 0);
   row.querySelector('.row-cost').textContent = tokenDataUnavailable === true ? '' : formatCost(cost || 0);
+  const speedEl = row.querySelector('.row-speed');
+  const latestSpeed = Number(lastTokenRate) || 0;
+  const showSpeed = state.breakdown === 'model' && latestSpeed > 0;
+  if (speedEl) {
+    speedEl.textContent = showSpeed ? `${latestSpeed.toFixed(1)} tok/s` : '';
+    speedEl.classList.toggle('hidden', !showSpeed);
+  }
   const fill = row.querySelector('.bar-fill');
   fill.style.background = barBackground || color;
   applyBarScale(fill, width / 100);
@@ -2283,7 +2278,8 @@ function modelRowsForPeriod(period) {
     cacheReadTokens: attributionComponent(period, 'modelCacheReads', model),
     cacheWriteTokens: attributionComponent(period, 'modelCacheWrites', model),
     outputTokens: attributionComponent(period, 'modelOutputs', model),
-    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model)
+    unclassifiedTokens: attributionComponent(period, 'modelUnclassifiedTokens', model),
+    lastTokenRate: toolDetailsApi.latestModelSpeedForPeriod(period, model).lastTokenRate || 0
   }));
   if (modelRows.length > 0) return modelRows.sort((a, b) => b.value - a.value);
   if (Number(period?.totalTokens || 0) === 0) return [];

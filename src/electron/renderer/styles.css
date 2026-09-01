@@ -3559,6 +3559,9 @@ html.is-windows .settings-panel select option {
 }
 .row-subtitle.hidden, .row-detail.hidden { display: none; }
 .row-metrics { display: grid; flex: 0 0 auto; gap: 2px; min-width: max-content; text-align: right; }
+.row-primary-metric { display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; min-width: 0; white-space: nowrap; }
+.row-speed { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row-speed.hidden { display: none; }
 .row-value { color: var(--text); white-space: nowrap; }
 .row-cost { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .bar { width: 100%; height: 6px; overflow: hidden; border-radius: 3px; background: rgba(var(--sunken-rgb), 0.46); box-shadow: inset 0 1px 0 rgba(var(--overlay-rgb), 0.04); }

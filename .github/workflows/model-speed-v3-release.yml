@@ -7,6 +7,7 @@ on:
       - 'src/electron/renderer/toolDetails.js'
       - 'scripts/apply-model-speed-layout-v3.js'
       - 'scripts/fix-model-speed-layout-v3-tests.js'
+      - 'scripts/clean-model-speed-layout-v3-patcher.js'
       - '.github/workflows/model-speed-v3-release.yml'
   workflow_dispatch:
 
@@ -40,6 +41,7 @@ jobs:
         run: |
           node scripts/apply-model-speed-layout-v3.js
           node scripts/fix-model-speed-layout-v3-tests.js
+          node scripts/clean-model-speed-layout-v3-patcher.js
 
       - name: Run focused model speed tests
         run: node --test tests/electron/modelSpeedLayout.test.js tests/electron/modelSpeedToolDetails.test.js tests/shared/recentModelSpeed.test.js
@@ -60,6 +62,7 @@ jobs:
             tests/electron/modelSpeedLayout.test.js \
             scripts/apply-model-speed-layout-v3.js \
             scripts/fix-model-speed-layout-v3-tests.js \
+            scripts/clean-model-speed-layout-v3-patcher.js \
             .github/workflows/model-speed-v3-release.yml
           if ! git diff --cached --quiet; then
             git commit -m "fix: move current model speed to homepage [model-speed-v3-release]"
